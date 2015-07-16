@@ -5,20 +5,17 @@ use std::env;
 fn main() {
     let mut config = gcc::Config::new();
 
-    let target = env::var("TARGET").unwrap();
-    if target.contains("ios") {
-        if target.contains("i386") ||
-                target.contains("i686") ||
-                target.contains("x86_64") {
-            // Simulator
-            config.flag("-mios-simulator-version-min=4.2");
+    if let Ok(ios_version) = env::var("IPHONEOS_DEPLOYMENT_TARGET") {
+        let platform = env::var("PLATFORM_NAME");
+        if platform.map(|p| p == "iphonesimulator").unwrap_or(false) {
+            config.flag(&format!("-mios-simulator-version-min={}", ios_version));
         } else {
-            // Device
-            config.flag("-miphoneos-version-min=4.2");
+            config.flag(&format!("-miphoneos-version-min={}", ios_version));
         }
-    } else if target.contains("darwin") {
-        // OSX
-        config.flag("-mmacosx-version-min=10.3");
+    }
+
+    if let Ok(osx_version) = env::var("MACOSX_DEPLOYMENT_TARGET") {
+        config.flag(&format!("-mmacosx-version-min={}", osx_version));
     }
 
     config.file("extern/exception.m");
