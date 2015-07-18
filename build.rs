@@ -5,17 +5,31 @@ use std::env;
 fn main() {
     let mut config = gcc::Config::new();
 
-    if let Ok(ios_version) = env::var("IPHONEOS_DEPLOYMENT_TARGET") {
-        let platform = env::var("PLATFORM_NAME");
-        if platform.map(|p| p == "iphonesimulator").unwrap_or(false) {
-            config.flag(&format!("-mios-simulator-version-min={}", ios_version));
+    // It seems that clang will try to compile for OSX even if you ask it to
+    // compile for i386-apple-ios; this manifests as the compiler generating
+    // code that links against symbols like objc_exception_extract that are
+    // only available on OSX, not iOS.
+    // The only way to avoid this seems to be to set the OS version min.
+    let target = env::var("TARGET").unwrap();
+    let version_min_flag = if target.contains("-ios") {
+        let version = env::var("IPHONEOS_DEPLOYMENT_TARGET").unwrap_or("2.0".to_string());
+        let platform = if target.contains("i386") ||
+                target.contains("i686") ||
+                target.contains("x86_64") {
+            "ios-simulator"
         } else {
-            config.flag(&format!("-miphoneos-version-min={}", ios_version));
-        }
-    }
+            "iphoneos"
+        };
+        Some((platform, version))
+    } else if target.contains("-darwin") {
+        let version = env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or("10.4".to_string());
+        Some(("macosx", version))
+    } else {
+        None
+    };
 
-    if let Ok(osx_version) = env::var("MACOSX_DEPLOYMENT_TARGET") {
-        config.flag(&format!("-mmacosx-version-min={}", osx_version));
+    if let Some((platform, version)) = version_min_flag {
+        config.flag(&format!("-m{}-version-min={}", platform, version));
     }
 
     config.file("extern/exception.m");
