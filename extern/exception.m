@@ -1,10 +1,6 @@
 #include <objc/objc.h>
 #include <objc/NSObject.h>
 
-void RustObjCExceptionThrow(id exception) {
-    @throw exception;
-}
-
 int RustObjCExceptionTryCatch(void (*try)(void *), void *context, id *error) {
     @try {
         try(context);
