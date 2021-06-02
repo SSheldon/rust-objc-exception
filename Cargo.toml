@@ -12,8 +12,3 @@ documentation = "http://ssheldon.github.io/rust-objc/objc_exception/"
 license = "MIT"
 
 exclude = [".gitignore"]
-
-build = "build.rs"
-
-[build-dependencies]
-cc = "1"
