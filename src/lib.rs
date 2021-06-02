@@ -1,16 +1,21 @@
 //! Rust interface for Objective-C's `@throw` and `@try`/`@catch` statements.
 
-use std::mem;
-use std::os::raw::{c_int, c_void};
-use std::ptr;
+#![no_std]
+
+#[cfg(test)]
+extern crate alloc;
+
+use core::ffi::c_void;
+use core::mem;
+use core::ptr;
 
 #[link(name = "objc", kind = "dylib")]
 extern { }
 
 extern {
     fn RustObjCExceptionThrow(exception: *mut c_void);
-    fn RustObjCExceptionTryCatch(try: extern fn(*mut c_void),
-            context: *mut c_void, error: *mut *mut c_void) -> c_int;
+    fn RustObjCExceptionTryCatch(r#try: extern fn(*mut c_void),
+            context: *mut c_void, error: *mut *mut c_void) -> u8; // std::os::raw::c_uchar
 }
 
 /// An opaque type representing any Objective-C object thrown as an exception.
@@ -59,7 +64,7 @@ unsafe fn try_no_ret<F>(closure: F) -> Result<(), *mut Exception>
 ///
 /// Unsafe because this encourages unwinding through the closure from
 /// Objective-C, which is not safe.
-pub unsafe fn try<F, R>(closure: F) -> Result<R, *mut Exception>
+pub unsafe fn r#try<F, R>(closure: F) -> Result<R, *mut Exception>
         where F: FnOnce() -> R {
     let mut value = None;
     let result = {
@@ -74,14 +79,16 @@ pub unsafe fn try<F, R>(closure: F) -> Result<R, *mut Exception>
 
 #[cfg(test)]
 mod tests {
-    use std::ptr;
-    use super::{throw, try};
+    use alloc::string::ToString;
+    use core::ptr;
+
+    use super::{r#try, throw};
 
     #[test]
     fn test_try() {
         unsafe {
             let s = "Hello".to_string();
-            let result = try(move || {
+            let result = r#try(move || {
                 if s.len() > 0 {
                     throw(ptr::null_mut());
                 }
@@ -90,7 +97,7 @@ mod tests {
             assert!(result.unwrap_err() == ptr::null_mut());
 
             let mut s = "Hello".to_string();
-            let result = try(move || {
+            let result = r#try(move || {
                 s.push_str(", World!");
                 s
             });

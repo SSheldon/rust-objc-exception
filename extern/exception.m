@@ -5,7 +5,8 @@ void RustObjCExceptionThrow(id exception) {
     @throw exception;
 }
 
-int RustObjCExceptionTryCatch(void (*try)(void *), void *context, id *error) {
+// We return `unsigned char`, since it is guaranteed to be an `u8` on all platforms
+unsigned char RustObjCExceptionTryCatch(void (*try)(void *), void *context, id *error) {
     @try {
         try(context);
         if (error) {
