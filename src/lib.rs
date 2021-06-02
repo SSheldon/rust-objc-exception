@@ -1,8 +1,13 @@
 //! Rust interface for Objective-C's `@throw` and `@try`/`@catch` statements.
 
-use std::mem;
-use std::os::raw::{c_int, c_void};
-use std::ptr;
+#![no_std]
+
+#[cfg(test)]
+extern crate alloc;
+
+use core::ffi::c_void;
+use core::mem;
+use core::ptr;
 
 #[link(name = "objc", kind = "dylib")]
 extern { }
@@ -10,7 +15,7 @@ extern { }
 extern {
     fn RustObjCExceptionThrow(exception: *mut c_void);
     fn RustObjCExceptionTryCatch(try: extern fn(*mut c_void),
-            context: *mut c_void, error: *mut *mut c_void) -> c_int;
+            context: *mut c_void, error: *mut *mut c_void) -> u8; // std::os::raw::c_uchar
 }
 
 /// An opaque type representing any Objective-C object thrown as an exception.
@@ -74,7 +79,9 @@ pub unsafe fn try<F, R>(closure: F) -> Result<R, *mut Exception>
 
 #[cfg(test)]
 mod tests {
-    use std::ptr;
+    use alloc::string::ToString;
+    use core::ptr;
+
     use super::{throw, try};
 
     #[test]
