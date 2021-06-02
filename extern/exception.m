@@ -1,10 +1,6 @@
 #include <objc/objc.h>
 #include <objc/NSObject.h>
 
-void RustObjCExceptionThrow(id exception) {
-    @throw exception;
-}
-
 // We return `unsigned char`, since it is guaranteed to be an `u8` on all platforms
 unsigned char RustObjCExceptionTryCatch(void (*try)(void *), void *context, id *error) {
     @try {

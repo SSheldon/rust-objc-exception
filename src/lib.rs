@@ -1,6 +1,7 @@
 //! Rust interface for Objective-C's `@throw` and `@try`/`@catch` statements.
 
 #![no_std]
+#![feature(c_unwind)]
 
 #[cfg(test)]
 extern crate alloc;
@@ -10,10 +11,13 @@ use core::mem;
 use core::ptr;
 
 #[link(name = "objc", kind = "dylib")]
-extern { }
+extern "C-unwind" {
+    // Header marks this with _Nonnull, but LLVM output shows otherwise
+    fn objc_exception_throw(exception: *mut c_void) -> !;
+    // fn objc_exception_rethrow();
+}
 
 extern {
-    fn RustObjCExceptionThrow(exception: *mut c_void);
     fn RustObjCExceptionTryCatch(r#try: extern fn(*mut c_void),
             context: *mut c_void, error: *mut *mut c_void) -> u8; // std::os::raw::c_uchar
 }
@@ -25,9 +29,9 @@ pub enum Exception { }
 /// The argument must be a pointer to an Objective-C object.
 ///
 /// Unsafe because this unwinds from Objective-C.
+#[inline]
 pub unsafe fn throw(exception: *mut Exception) -> ! {
-    RustObjCExceptionThrow(exception as *mut _);
-    unreachable!();
+    objc_exception_throw(exception as *mut _)
 }
 
 unsafe fn try_no_ret<F>(closure: F) -> Result<(), *mut Exception>
