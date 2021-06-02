@@ -5,10 +5,16 @@ use std::os::raw::{c_int, c_void};
 use std::ptr;
 
 #[link(name = "objc", kind = "dylib")]
-extern { }
+extern "C" { // TODO: "C-unwind"
+    /// See [`objc-exception.h`][objc-exception].
+    ///
+    /// [objc-exception]: https://opensource.apple.com/source/objc4/objc4-818.2/runtime/objc-exception.h.auto.html
+    // Header marks this with _Nonnull, but LLVM output shows otherwise
+    fn objc_exception_throw(exception: *mut c_void) -> !;
+    // fn objc_exception_rethrow();
+}
 
 extern {
-    fn RustObjCExceptionThrow(exception: *mut c_void);
     fn RustObjCExceptionTryCatch(try: extern fn(*mut c_void),
             context: *mut c_void, error: *mut *mut c_void) -> c_int;
 }
@@ -20,9 +26,14 @@ pub enum Exception { }
 /// The argument must be a pointer to an Objective-C object.
 ///
 /// Unsafe because this unwinds from Objective-C.
+///
+/// This also invokes undefined behaviour until `C-unwind` is stabilized, see
+/// [RFC-2945].
+///
+/// [RFC-2945]: https://rust-lang.github.io/rfcs/2945-c-unwind-abi.html
+#[inline]
 pub unsafe fn throw(exception: *mut Exception) -> ! {
-    RustObjCExceptionThrow(exception as *mut _);
-    unreachable!();
+    objc_exception_throw(exception as *mut _)
 }
 
 unsafe fn try_no_ret<F>(closure: F) -> Result<(), *mut Exception>
