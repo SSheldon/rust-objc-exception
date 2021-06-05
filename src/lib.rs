@@ -1,16 +1,31 @@
 //! Rust interface for Objective-C's `@throw` and `@try`/`@catch` statements.
 
-use std::mem;
-use std::os::raw::{c_int, c_void};
-use std::ptr;
+#![no_std]
+#![feature(c_unwind)]
+#![feature(core_intrinsics)]
+
+#[cfg(test)]
+extern crate alloc;
+
+use core::ffi::c_void;
+use core::intrinsics;
+use core::mem::ManuallyDrop;
 
 #[link(name = "objc", kind = "dylib")]
-extern { }
+extern "C-unwind" {
+    // Header marks this with _Nonnull, but LLVM output shows otherwise
+    fn objc_exception_throw(exception: *mut c_void) -> !;
+    // fn objc_exception_rethrow();
+}
 
-extern {
-    fn RustObjCExceptionThrow(exception: *mut c_void);
-    fn RustObjCExceptionTryCatch(try: extern fn(*mut c_void),
-            context: *mut c_void, error: *mut *mut c_void) -> c_int;
+#[link(name = "objc", kind = "dylib")]
+extern "C" {
+    // Header marks this with _Nonnull, but LLVM output shows otherwise
+    fn objc_begin_catch(exc_buf: *mut c_void) -> *mut c_void;
+    fn objc_end_catch();
+
+    // Doesn't belong in this library, but is required to return the exception
+    fn objc_retain(value: *mut c_void) -> *mut c_void;
 }
 
 /// An opaque type representing any Objective-C object thrown as an exception.
@@ -20,34 +35,9 @@ pub enum Exception { }
 /// The argument must be a pointer to an Objective-C object.
 ///
 /// Unsafe because this unwinds from Objective-C.
+#[inline]
 pub unsafe fn throw(exception: *mut Exception) -> ! {
-    RustObjCExceptionThrow(exception as *mut _);
-    unreachable!();
-}
-
-unsafe fn try_no_ret<F>(closure: F) -> Result<(), *mut Exception>
-        where F: FnOnce() {
-    extern fn try_objc_execute_closure<F>(closure: &mut Option<F>)
-            where F: FnOnce() {
-        // This is always passed Some, so it's safe to unwrap
-        let closure = closure.take().unwrap();
-        closure();
-    }
-
-    let f: extern fn(&mut Option<F>) = try_objc_execute_closure;
-    let f: extern fn(*mut c_void) = mem::transmute(f);
-    // Wrap the closure in an Option so it can be taken
-    let mut closure = Some(closure);
-    let context = &mut closure as *mut _ as *mut c_void;
-
-    let mut exception = ptr::null_mut();
-    let success = RustObjCExceptionTryCatch(f, context, &mut exception);
-
-    if success == 0 {
-        Ok(())
-    } else {
-        Err(exception as *mut _)
-    }
+    objc_exception_throw(exception as *mut _)
 }
 
 /// Tries to execute the given closure and catches an Objective-C exception
@@ -59,29 +49,73 @@ unsafe fn try_no_ret<F>(closure: F) -> Result<(), *mut Exception>
 ///
 /// Unsafe because this encourages unwinding through the closure from
 /// Objective-C, which is not safe.
-pub unsafe fn try<F, R>(closure: F) -> Result<R, *mut Exception>
-        where F: FnOnce() -> R {
-    let mut value = None;
-    let result = {
-        let value_ref = &mut value;
-        try_no_ret(move || {
-            *value_ref = Some(closure());
-        })
+pub unsafe fn r#try<F: FnOnce() -> R, R>(f: F) -> Result<R, *mut Exception> {
+    // Our implementation is just a copy of `std::panicking::r#try`:
+    // https://github.com/rust-lang/rust/blob/1.52.1/library/std/src/panicking.rs#L299-L408
+    union Data<F, R> {
+        f: ManuallyDrop<F>,
+        r: ManuallyDrop<R>,
+        p: ManuallyDrop<*mut Exception>,
+    }
+
+    let mut data = Data { f: ManuallyDrop::new(f) };
+
+    let data_ptr = &mut data as *mut _ as *mut u8;
+
+    return if intrinsics::r#try(do_call::<F, R>, data_ptr, do_catch::<F, R>) == 0 {
+        Ok(ManuallyDrop::into_inner(data.r))
+    } else {
+        Err(ManuallyDrop::into_inner(data.p))
     };
-    // If the try succeeded, this was set so it's safe to unwrap
-    result.map(|_| value.unwrap())
+
+    /// Only function that we've changed
+    #[cold]
+    unsafe fn cleanup(payload: *mut u8) -> *mut Exception {
+        // We let Objective-C process the unwind payload, and hand us the
+        // exception object. Everything between this and `objc_end_catch` is
+        // treated as a `@catch` block.
+        let obj = objc_begin_catch(payload as *mut c_void);
+        // We retain the exception since it might have been autoreleased.
+        // This cannot unwind, so we don't need extra guards here.
+        let obj = objc_retain(obj) as *mut Exception;
+        // End the `@catch` block.
+        objc_end_catch();
+        obj
+    }
+
+    #[inline]
+    fn do_call<F: FnOnce() -> R, R>(data: *mut u8) {
+        unsafe {
+            let data = data as *mut Data<F, R>;
+            let data = &mut (*data);
+            let f = ManuallyDrop::take(&mut data.f);
+            data.r = ManuallyDrop::new(f());
+        }
+    }
+
+    #[inline]
+    fn do_catch<F: FnOnce() -> R, R>(data: *mut u8, payload: *mut u8) {
+        unsafe {
+            let data = data as *mut Data<F, R>;
+            let data = &mut (*data);
+            let obj = cleanup(payload);
+            data.p = ManuallyDrop::new(obj);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ptr;
-    use super::{throw, try};
+    use alloc::string::ToString;
+    use core::ptr;
+
+    use super::{r#try, throw};
 
     #[test]
     fn test_try() {
         unsafe {
             let s = "Hello".to_string();
-            let result = try(move || {
+            let result = r#try(move || {
                 if s.len() > 0 {
                     throw(ptr::null_mut());
                 }
@@ -90,7 +124,7 @@ mod tests {
             assert!(result.unwrap_err() == ptr::null_mut());
 
             let mut s = "Hello".to_string();
-            let result = try(move || {
+            let result = r#try(move || {
                 s.push_str(", World!");
                 s
             });
